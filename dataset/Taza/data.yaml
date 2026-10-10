@@ -1,0 +1,7 @@
+path: "C:/Users/Lenovo.GT3-PEC30/Desktop/Hackathon/Mechatronics/datasets/taza_prepared"
+train: train/images
+val: valid/images
+test: test/images
+nc: 1
+names:
+  0: "taza"

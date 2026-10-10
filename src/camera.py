@@ -20,7 +20,8 @@ def main():
             frame = cv2.resize(frame, (640, 480))
             cv2.imshow("Mechatronics - Camara", frame)
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), ord("Q")):
                 break
 
     finally:

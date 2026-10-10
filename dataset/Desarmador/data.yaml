@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['screwdriver']
+
+roboflow:
+  workspace: asim-wcmjq
+  project: screwdriver-dtbch
+  version: 17
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/asim-wcmjq/screwdriver-dtbch/dataset/17

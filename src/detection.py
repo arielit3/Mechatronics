@@ -1,21 +1,37 @@
 
 import cv2
 import time
+from pathlib import Path
 from ultralytics import YOLO
 
-# Clases que queremos reconocer
+# Nombres de clase que contiene el modelo entrenado.
 CLASES_PERMITIDAS = {
+    "bottle": "Botella",
+    "cell_phone": "Celular",
     "cup": "Taza",
     "scissors": "Tijeras",
-    "bottle": "Botella",
-    "cell phone": "Celular",
     "screwdriver": "Destornillador"
 }
+RUTA_MODELO = Path(__file__).resolve().parents[1] / "Deteccion" / "best.pt"
 
 
 def main():
-    # Cargar el modelo YOLO
-    modelo = YOLO("yolo11n.pt")
+    if not RUTA_MODELO.is_file():
+        raise FileNotFoundError(f"No se encontro el modelo entrenado: {RUTA_MODELO}")
+
+    modelo = YOLO(str(RUTA_MODELO))
+    clases_modelo = modelo.names
+    clases_faltantes = set(CLASES_PERMITIDAS) - set(clases_modelo.values())
+    if clases_faltantes:
+        raise RuntimeError(
+            "El modelo no contiene todas las clases esperadas: "
+            + ", ".join(sorted(clases_faltantes))
+        )
+    ids_clases_permitidas = [
+        id_clase
+        for id_clase, nombre in clases_modelo.items()
+        if nombre in CLASES_PERMITIDAS
+    ]
 
     # Seleccionar camara: 0 para la primera, 1 para la segunda
     indice_camara = 0
@@ -48,6 +64,7 @@ def main():
                 device="cpu",
                 imgsz=320,
                 conf=0.35,
+                classes=ids_clases_permitidas,
                 verbose=False
             )
 
@@ -64,13 +81,10 @@ def main():
                     )
 
                     confianza = float(caja.conf[0])
-
-                    if nombre in CLASES_PERMITIDAS:
-                        etiqueta = CLASES_PERMITIDAS[nombre]
-                        color = (0, 255, 0)  # Verde
-                    else:
-                        etiqueta = "Objeto desconocido"
-                        color = (0, 0, 255)  # Rojo
+                    etiqueta = CLASES_PERMITIDAS.get(nombre)
+                    if etiqueta is None:
+                        continue
+                    color = (0, 255, 0)  # Verde
 
                     # Dibujar rectangulo
                     cv2.rectangle(
@@ -112,14 +126,19 @@ def main():
                 2
             )
 
-            # Mostrar ventana
+            # INTERFAZ: agrega aqui elementos visuales como botones dibujados,
+            # estados o instrucciones antes de presentar cada fotograma.
             cv2.imshow(
                 "Mechatronics - Deteccion en tiempo real",
                 imagen
             )
 
-            # Salir al presionar Q
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            # INTERFAZ: para responder a clics, registra cv2.setMouseCallback
+            # en la ventana y procesa aqui las acciones junto con las teclas.
+            # OpenCV no ofrece botones nativos; para controles reales, integra
+            # esta vista en una interfaz hecha con Tkinter o PySide.
+            tecla = cv2.waitKey(1) & 0xFF
+            if tecla in (ord("q"), ord("Q")):
                 break
 
     finally:
