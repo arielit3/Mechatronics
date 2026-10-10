@@ -1,0 +1,20 @@
+{
+  "precision_media": 0.9210047112545463,
+  "recall_medio": 0.8524941605676105,
+  "mAP50": 0.9018543979308237,
+  "mAP50_95": 0.7361506280242134,
+  "velocidad_ms_por_imagen": {
+    "preprocess": 1.5482970570945147,
+    "inference": 46.17024682166668,
+    "loss": 0.00013122424880235075,
+    "postprocess": 0.904035285448797
+  },
+  "fps_inferencia_aproximado": 21.658970199195945,
+  "metricas_por_clase_csv": "metricas_por_clase.csv",
+  "split": "valid",
+  "tamano_entrada": 320,
+  "dispositivo": "cpu",
+  "clases_sin_datos": [
+    "scissors"
+  ]
+}

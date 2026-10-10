@@ -29,3 +29,22 @@ de camara. La captura y la inferencia se ejecutan en un hilo de trabajo y
 envian el fotograma mas reciente a la interfaz, para que esta no procese una
 cola de imagenes atrasadas. El logo de `src/img/logo.png` aparece en el panel y
 como icono de la ventana y de la barra de tareas de Ixtli.
+
+## Metricas del modelo
+
+Desde la raiz del proyecto, ejecuta el evaluador con:
+
+```powershell
+.\.venv\Scripts\python.exe metricas\evaluar_modelo.py
+```
+
+Por defecto evalua el split `valid` a `imgsz=320`, para aproximarse al tamano
+usado por la aplicacion. Guarda precision, recall y mAP en JSON/CSV, ademas de
+las graficas y la matriz de confusion de Ultralytics, dentro de una nueva
+carpeta en `metricas\resultados`. Usa `--split test` para seleccionar el split
+de prueba o `--dry-run` para revisar las etiquetas y la cobertura sin ejecutar
+el modelo. El dataset actual no tiene evaluacion para todas las clases: revisa
+la advertencia del script antes de presentar los resultados como metricas de
+las cinco clases. El FPS aproximado del reporte mide inferencia del modelo,
+no incluye camara, seguimiento ni interfaz, por lo que no equivale al FPS de
+la aplicacion en vivo.
