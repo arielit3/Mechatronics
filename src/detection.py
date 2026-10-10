@@ -95,10 +95,6 @@ def procesar_camara(
         print(f"Camara {indice_camara} detectada.")
         inicio_fps = time.perf_counter()
         fotogramas_por_segundo = 0
-        conteos_acumulados = {
-            etiqueta: 0 for etiqueta in CLASES_PERMITIDAS.values()
-        }
-        objetos_vistos = set()
 
         while not detener.is_set():
             with bloqueo_camara:
@@ -138,8 +134,9 @@ def procesar_camara(
                 tracker="bytetrack.yaml",
                 verbose=False,
             )
+
             imagen = fotograma.copy()
-            imagen = fotograma.copy()
+            conteos = {etiqueta: 0 for etiqueta in CLASES_PERMITIDAS.values()}
             for resultado in resultados:
                 for indice_caja, caja in enumerate(resultado.boxes):
                     id_clase = int(caja.cls[0])
@@ -148,20 +145,12 @@ def procesar_camara(
                     if etiqueta is None:
                         continue
 
+                    conteos[etiqueta] += 1
                     id_objeto = (
                         int(caja.id[0])
                         if caja.id is not None
                         else None
                     )
-                    clave_objeto = (
-                        (indice_camara, id_objeto)
-                        if id_objeto is not None
-                        else None
-                    )
-                    if clave_objeto is not None and clave_objeto not in objetos_vistos:
-                        objetos_vistos.add(clave_objeto)
-                        conteos_acumulados[etiqueta] += 1
-
                     x1, y1, x2, y2 = map(int, caja.xyxy[0].tolist())
                     confianza = float(caja.conf[0])
                     id_color = (
@@ -194,17 +183,13 @@ def procesar_camara(
                 fps = fotogramas_por_segundo / lapso
 
             try:
-                cola_fotogramas.put_nowait(
-                    (imagen, fps, conteos_acumulados.copy())
-                )
+                cola_fotogramas.put_nowait((imagen, fps, conteos))
             except queue.Full:
                 try:
                     cola_fotogramas.get_nowait()
                 except queue.Empty:
                     pass
-                cola_fotogramas.put_nowait(
-                    (imagen, fps, conteos_acumulados.copy())
-                )
+                cola_fotogramas.put_nowait((imagen, fps, conteos))
     except Exception as error:
         cola_errores.put(error)
     finally:
