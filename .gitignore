@@ -3,3 +3,16 @@ datasets
 prepare_cell_phone_dataset.py
 celular
 detection_copy.py
+
+
+# Entorno virtual de Python
+.venv/
+venv/
+env/
+
+# Archivos de Python
+__pycache__/
+*.pyc
+
+# Configuración local de VS Code
+.vscode/
