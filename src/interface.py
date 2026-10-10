@@ -1,10 +1,13 @@
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from pathlib import Path
+from tkinter import messagebox, ttk
 
 import cv2
 from PIL import Image, ImageTk
+
+RUTA_LOGO = Path(__file__).resolve().parent / "img" / "logo.png"
 
 UMBRAL_INICIAL = 0.35
 UMBRAL_MINIMO = 0.05
@@ -24,16 +27,29 @@ def ejecutar_interfaz(procesar_camara, clases_permitidas):
     raiz.minsize(980, 600)
     raiz.configure(bg="#111827")
 
+    logo = Image.open(RUTA_LOGO).convert("RGBA")
+    logo.thumbnail((88, 88), Image.Resampling.LANCZOS)
+    imagen_logo = ImageTk.PhotoImage(logo)
+    raiz.iconphoto(True, imagen_logo)
+
     estado_umbral = {"valor": UMBRAL_INICIAL}
     bloqueo_umbral = threading.Lock()
+    estado_camara = {"indice": None}
+    bloqueo_camara = threading.Lock()
     cola_fotogramas = queue.Queue(maxsize=1)
     cola_errores = queue.Queue()
+    cola_camaras = queue.Queue(maxsize=1)
     detener = threading.Event()
 
     panel = tk.Frame(raiz, bg="#1f2937", width=260, padx=20, pady=24)
     panel.pack(side=tk.LEFT, fill=tk.Y)
     panel.pack_propagate(False)
 
+    tk.Label(
+        panel,
+        image=imagen_logo,
+        bg="#1f2937",
+    ).pack(anchor=tk.CENTER, pady=(0, 8))
     tk.Label(
         panel,
         text="IXTLI",
@@ -47,7 +63,7 @@ def ejecutar_interfaz(procesar_camara, clases_permitidas):
         font=("Segoe UI", 10),
         fg="#9ca3af",
         bg="#1f2937",
-    ).pack(anchor=tk.W, pady=(0, 28))
+    ).pack(anchor=tk.W, pady=(0, 18))
 
     tk.Label(
         panel,
@@ -94,6 +110,31 @@ def ejecutar_interfaz(procesar_camara, clases_permitidas):
     )
     boton_aumentar.pack(side=tk.RIGHT)
 
+    tk.Label(
+        panel,
+        text="Camara",
+        font=("Segoe UI", 11, "bold"),
+        fg="#f9fafb",
+        bg="#1f2937",
+    ).pack(anchor=tk.W, pady=(18, 5))
+    seleccion_camara = tk.StringVar(value="Buscando camaras...")
+    selector_camara = ttk.Combobox(
+        panel,
+        textvariable=seleccion_camara,
+        state="disabled",
+        width=24,
+    )
+    selector_camara.pack(fill=tk.X)
+
+    def cambiar_camara(evento):
+        indice = indices_por_nombre.get(evento.widget.get())
+        if indice is not None:
+            with bloqueo_camara:
+                estado_camara["indice"] = indice
+
+    indices_por_nombre = {}
+    selector_camara.bind("<<ComboboxSelected>>", cambiar_camara)
+
     def ajustar_umbral(cambio):
         with bloqueo_umbral:
             estado_umbral["valor"] = calcular_umbral(
@@ -112,7 +153,7 @@ def ejecutar_interfaz(procesar_camara, clases_permitidas):
 
     tk.Label(
         panel,
-        text="Detectados en imagen actual",
+        text="Objetos vistos (total)",
         font=("Segoe UI", 12, "bold"),
         fg="#f9fafb",
         bg="#1f2937",
@@ -141,7 +182,7 @@ def ejecutar_interfaz(procesar_camara, clases_permitidas):
 
     tk.Label(
         panel,
-        text="Los conteos corresponden solo al fotograma visible.",
+        text="Acumulado de objetos unicos detectados durante esta sesion.",
         wraplength=215,
         justify=tk.LEFT,
         font=("Segoe UI", 9),
@@ -178,11 +219,45 @@ def ejecutar_interfaz(procesar_camara, clases_permitidas):
             detener,
             estado_umbral,
             bloqueo_umbral,
+            estado_camara,
+            bloqueo_camara,
+            cola_camaras,
         ),
         daemon=True,
     )
 
     def actualizar_interfaz():
+        try:
+            indices_camaras = cola_camaras.get_nowait()
+        except queue.Empty:
+            pass
+        else:
+            indices_por_nombre.clear()
+            indices_por_nombre.update(
+                {
+                    f"Camara {indice}": indice
+                    for indice in indices_camaras
+                }
+            )
+            opciones = list(indices_por_nombre)
+            selector_camara.configure(values=opciones)
+            if opciones:
+                with bloqueo_camara:
+                    indice_actual = estado_camara["indice"]
+                seleccion_camara.set(
+                    next(
+                        (
+                            nombre
+                            for nombre, indice in indices_por_nombre.items()
+                            if indice == indice_actual
+                        ),
+                        opciones[0],
+                    )
+                )
+                selector_camara.configure(state="readonly")
+            else:
+                seleccion_camara.set("Sin camaras disponibles")
+
         try:
             error = cola_errores.get_nowait()
         except queue.Empty:

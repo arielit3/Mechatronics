@@ -1,13 +1,15 @@
-
-import cv2
-import time
 import colorsys
 import queue
+import time
 from pathlib import Path
+
+import cv2
 from ultralytics import YOLO
 
+from interface import ejecutar_interfaz
+
+
 MAX_INDICE_CAMARA = 9
-TAMANO_FOTOGRAMA = (640, 480)
 
 # Nombres de clase que contiene el modelo entrenado.
 CLASES_PERMITIDAS = {
@@ -15,7 +17,7 @@ CLASES_PERMITIDAS = {
     "cell_phone": "Celular",
     "cup": "Taza",
     "scissors": "Tijeras",
-    "screwdriver": "Destornillador"
+    "screwdriver": "Destornillador",
 }
 RUTA_MODELO = Path(__file__).resolve().parents[1] / "Deteccion" / "best.pt"
 
@@ -26,30 +28,19 @@ def color_por_id(id_objeto):
     return int(azul * 255), int(verde * 255), int(rojo * 255)
 
 
-def buscar_camara():
-    # Las camaras USB adicionales suelen tener indices mayores que 0;
-    # se prueban primero y la camara integrada queda como alternativa.
+def buscar_camaras():
     indices = [*range(1, MAX_INDICE_CAMARA + 1), 0]
+    disponibles = []
     for indice in indices:
         camara = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
-        if camara.isOpened():
-            correcto, primer_fotograma = camara.read()
-            if correcto:
-                return camara, indice, primer_fotograma
-        camara.release()
-
-    return None, None, None
-
-
-def publicar_fotograma(cola_fotogramas, datos):
-    try:
-        cola_fotogramas.put_nowait(datos)
-    except queue.Full:
         try:
-            cola_fotogramas.get_nowait()
-        except queue.Empty:
-            pass
-        cola_fotogramas.put_nowait(datos)
+            if camara.isOpened():
+                correcto, _ = camara.read()
+                if correcto:
+                    disponibles.append(indice)
+        finally:
+            camara.release()
+    return disponibles
 
 
 def procesar_camara(
@@ -58,15 +49,34 @@ def procesar_camara(
     detener,
     estado_umbral,
     bloqueo_umbral,
+    estado_camara,
+    bloqueo_camara,
+    cola_camaras,
 ):
     camara = None
     try:
-        camara, _, primer_fotograma = buscar_camara()
+        indices_camaras = buscar_camaras()
+        cola_camaras.put(indices_camaras)
+        if not indices_camaras:
+            raise RuntimeError(
+                "No se encontro ninguna camara disponible. "
+                "Conecta una camara e intenta nuevamente."
+            )
+
+        with bloqueo_camara:
+            indice_camara = estado_camara["indice"]
+            if indice_camara not in indices_camaras:
+                indice_camara = indices_camaras[0]
+                estado_camara["indice"] = indice_camara
+
+        camara, primer_fotograma = abrir_camara(indice_camara)
         if camara is None:
-            raise RuntimeError("No se encontro ninguna camara disponible.")
+            raise RuntimeError(f"No se pudo abrir la camara {indice_camara}.")
 
         if not RUTA_MODELO.is_file():
-            raise FileNotFoundError(f"No se encontro el modelo entrenado: {RUTA_MODELO}")
+            raise FileNotFoundError(
+                f"No se encontro el modelo entrenado: {RUTA_MODELO}"
+            )
 
         modelo = YOLO(str(RUTA_MODELO))
         clases_modelo = modelo.names
@@ -82,8 +92,28 @@ def procesar_camara(
             if nombre in CLASES_PERMITIDAS
         ]
 
-        tiempo_anterior = time.perf_counter()
+        print(f"Camara {indice_camara} detectada.")
+        inicio_fps = time.perf_counter()
+        fotogramas_por_segundo = 0
+        conteos_acumulados = {
+            etiqueta: 0 for etiqueta in CLASES_PERMITIDAS.values()
+        }
+        objetos_vistos = set()
+
         while not detener.is_set():
+            with bloqueo_camara:
+                indice_solicitado = estado_camara["indice"]
+            if indice_solicitado != indice_camara:
+                camara.release()
+                camara, primer_fotograma = abrir_camara(indice_solicitado)
+                if camara is None:
+                    raise RuntimeError(
+                        f"No se pudo cambiar a la camara {indice_solicitado}."
+                    )
+                indice_camara = indice_solicitado
+                inicio_fps = time.perf_counter()
+                fotogramas_por_segundo = 0
+
             if primer_fotograma is not None:
                 fotograma = primer_fotograma
                 primer_fotograma = None
@@ -92,9 +122,9 @@ def procesar_camara(
                 correcto, fotograma = camara.read()
 
             if not correcto:
-                raise RuntimeError("Error al capturar un fotograma de la camara.")
+                raise RuntimeError("Error al capturar el fotograma.")
 
-            fotograma = cv2.resize(fotograma, TAMANO_FOTOGRAMA)
+            fotograma = cv2.resize(fotograma, (640, 480))
             with bloqueo_umbral:
                 umbral = estado_umbral["valor"]
 
@@ -106,31 +136,34 @@ def procesar_camara(
                 classes=ids_clases_permitidas,
                 persist=True,
                 tracker="bytetrack.yaml",
-                verbose=False
+                verbose=False,
             )
-
             imagen = fotograma.copy()
-            conteos = {etiqueta: 0 for etiqueta in CLASES_PERMITIDAS.values()}
-
+            imagen = fotograma.copy()
             for resultado in resultados:
                 for indice_caja, caja in enumerate(resultado.boxes):
                     id_clase = int(caja.cls[0])
                     nombre = modelo.names[id_clase]
+                    etiqueta = CLASES_PERMITIDAS.get(nombre)
+                    if etiqueta is None:
+                        continue
+
                     id_objeto = (
                         int(caja.id[0])
                         if caja.id is not None
                         else None
                     )
-
-                    x1, y1, x2, y2 = map(
-                        int, caja.xyxy[0].tolist()
+                    clave_objeto = (
+                        (indice_camara, id_objeto)
+                        if id_objeto is not None
+                        else None
                     )
+                    if clave_objeto is not None and clave_objeto not in objetos_vistos:
+                        objetos_vistos.add(clave_objeto)
+                        conteos_acumulados[etiqueta] += 1
 
+                    x1, y1, x2, y2 = map(int, caja.xyxy[0].tolist())
                     confianza = float(caja.conf[0])
-                    etiqueta = CLASES_PERMITIDAS.get(nombre)
-                    if etiqueta is None:
-                        continue
-                    conteos[etiqueta] += 1
                     id_color = (
                         id_objeto
                         if id_objeto is not None
@@ -138,14 +171,7 @@ def procesar_camara(
                     )
                     color = color_por_id(id_color)
 
-                    cv2.rectangle(
-                        imagen,
-                        (x1, y1),
-                        (x2, y2),
-                        color,
-                        2
-                    )
-
+                    cv2.rectangle(imagen, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(
                         imagen,
                         f"{etiqueta} ID:{id_objeto if id_objeto is not None else '--'} "
@@ -154,25 +180,31 @@ def procesar_camara(
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         color,
-                        2
+                        2,
                     )
 
-            tiempo_actual = time.perf_counter()
-            tiempo_transcurrido = tiempo_actual - tiempo_anterior
-            fps = 1.0 / tiempo_transcurrido if tiempo_transcurrido > 0 else 0.0
-            tiempo_anterior = tiempo_actual
+            fotogramas_por_segundo += 1
+            ahora = time.perf_counter()
+            lapso = ahora - inicio_fps
+            if lapso >= 1:
+                fps = fotogramas_por_segundo / lapso
+                inicio_fps = ahora
+                fotogramas_por_segundo = 0
+            else:
+                fps = fotogramas_por_segundo / lapso
 
-            cv2.putText(
-                imagen,
-                f"FPS: {fps:.1f}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 0),
-                2
-            )
-
-            publicar_fotograma(cola_fotogramas, (imagen, fps, conteos))
+            try:
+                cola_fotogramas.put_nowait(
+                    (imagen, fps, conteos_acumulados.copy())
+                )
+            except queue.Full:
+                try:
+                    cola_fotogramas.get_nowait()
+                except queue.Empty:
+                    pass
+                cola_fotogramas.put_nowait(
+                    (imagen, fps, conteos_acumulados.copy())
+                )
     except Exception as error:
         cola_errores.put(error)
     finally:
@@ -180,10 +212,19 @@ def procesar_camara(
             camara.release()
 
 
-if __name__ == "__main__":
-    if __package__:
-        from .interface import ejecutar_interfaz
-    else:
-        from interface import ejecutar_interfaz
+def abrir_camara(indice):
+    camara = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
+    if camara.isOpened():
+        correcto, primer_fotograma = camara.read()
+        if correcto:
+            return camara, primer_fotograma
+    camara.release()
+    return None, None
 
+
+def main():
     ejecutar_interfaz(procesar_camara, CLASES_PERMITIDAS)
+
+
+if __name__ == "__main__":
+    main()
